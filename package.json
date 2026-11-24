@@ -11,6 +11,7 @@
   "scripts": {
     "check": "node --check src/cooldown.mjs && node --check src/cost_guard.mjs && node --check src/guardrails.mjs && node --check src/gateway.mjs && node --check eval/run_benchmark.mjs",
     "start": "node src/gateway.mjs",
+    "start:mock": "node src/gateway.mjs --mock",
     "test": "node --test tests/*.test.mjs",
     "eval": "node eval/run_benchmark.mjs"
   }

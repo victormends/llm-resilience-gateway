@@ -55,7 +55,7 @@ Client Request (POST /triage | GET /health?probe=1 | GET /budget)
 
 ## Quickstart
 
-Requires Node.js `>=22` (tested on `v26.12.1`) with zero external npm dependencies.
+Requires **Node.js >= 22 LTS** (verified in CI on Node 22 and 24) with zero external npm dependencies.
 
 ```bash
 # Syntax verification across source and evaluation modules
@@ -68,9 +68,13 @@ npm test
 npm run eval
 ```
 
-Start the local HTTP gateway (`127.0.0.1:8420` by default):
+Start the local HTTP gateway (`127.0.0.1:8420` by default) in **built-in mock mode** (no API keys needed) or upstream proxy mode:
 
 ```bash
+# Built-in deterministic mock upstream for local HTTP testing
+npm run start:mock
+
+# Or connect to live OpenAI-compatible upstreams via environment variables
 npm start
 ```
 

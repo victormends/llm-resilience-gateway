@@ -400,3 +400,66 @@ test("HTTP POST /triage returns 502 with redacted error attempts when all MODEL_
     await gw.stop();
   }
 });
+
+test("HTTP gateway rejects non-loopback Host (DNS rebinding), rejects malformed targets with 400, and supports built-in mock mode", async () => {
+  const gw = createGateway({
+    port: 0,
+    mockMode: true,
+    logger: () => {}
+  });
+
+  const addr = await gw.start(0, "127.0.0.1");
+  const baseUrl = `http://${addr.address}:${addr.port}`;
+
+  try {
+    // 1. DNS rebinding protection via Host header allowlist
+    const net = await import("node:net");
+    const evilHostResponse = await new Promise((resolve, reject) => {
+      const sock = net.createConnection({ host: addr.address, port: addr.port }, () => {
+        sock.write("GET /health HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n");
+      });
+      let raw = "";
+      sock.on("data", (chunk) => { raw += chunk.toString("utf8"); });
+      sock.on("end", () => resolve(raw));
+      sock.on("error", reject);
+    });
+    assert.match(evilHostResponse, /^HTTP\/1\.1 403 /);
+    assert.match(evilHostResponse, /Host not allowed/);
+
+    // 2. Malformed URL target returns 400 instead of unhandled 500
+    const badUrlResponse = await new Promise((resolve, reject) => {
+      const sock = net.createConnection({ host: addr.address, port: addr.port }, () => {
+        sock.write(`GET /triage\\bad HTTP/1.1\r\nHost: 127.0.0.1:${addr.port}\r\nConnection: close\r\n\r\n`);
+      });
+      let raw = "";
+      sock.on("data", (chunk) => { raw += chunk.toString("utf8"); });
+      sock.on("end", () => resolve(raw));
+      sock.on("error", reject);
+    });
+    assert.match(badUrlResponse, /^HTTP\/1\.1 400 /);
+    assert.match(badUrlResponse, /Malformed request target/);
+
+    // 3. Built-in --mock mode responds to preflight probe and /triage end-to-end
+    const healthRes = await fetch(`${baseUrl}/health?probe=1`);
+    assert.equal(healthRes.status, 200);
+    const healthBody = await healthRes.json();
+    assert.equal(healthBody.status, "ready");
+
+    const triageRes = await fetch(`${baseUrl}/triage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventId: "evt-mock-1",
+        service: "orders-postgres",
+        environment: "production",
+        message: "Primary WAL disk at 99% exhaustion"
+      })
+    });
+    assert.equal(triageRes.status, 200);
+    const triageBody = await triageRes.json();
+    assert.equal(triageBody.triage.severity, "P1");
+    assert.equal(triageBody.triage.incidentType, "disk_saturation");
+  } finally {
+    await gw.stop();
+  }
+});

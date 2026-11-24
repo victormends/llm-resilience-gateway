@@ -10,6 +10,7 @@ import {
   ALL_SAFE_ACTIONS,
   CATEGORIES,
   GuardrailError,
+  SAFE_ACTIONS_BY_INCIDENT_TYPE,
   SEVERITIES,
   TRIAGE_RESPONSE_SCHEMA,
   applyTriagePolicy,
@@ -317,8 +318,101 @@ export function createHttpTransport() {
   };
 }
 
-function normalizeTransport(transportOption) {
-  if (!transportOption) return createHttpTransport();
+const DEFAULT_ALLOWED_LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+export function isAllowedLoopbackHost(hostHeader, extraAllowedHosts = []) {
+  if (!hostHeader || typeof hostHeader !== "string") return true;
+  const trimmed = hostHeader.trim().toLowerCase();
+  if (!trimmed) return false;
+  let hostname = trimmed;
+  if (trimmed.startsWith("[")) {
+    const endBracket = trimmed.indexOf("]");
+    if (endBracket === -1) return false;
+    const after = trimmed.slice(endBracket + 1);
+    if (after && !/^:\d+$/.test(after)) return false;
+    hostname = trimmed.slice(0, endBracket + 1);
+  } else {
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx !== -1) {
+      const portPart = trimmed.slice(colonIdx + 1);
+      if (!/^\d+$/.test(portPart)) return false;
+      hostname = trimmed.slice(0, colonIdx);
+    }
+  }
+  if (DEFAULT_ALLOWED_LOOPBACK_HOSTS.has(hostname)) return true;
+  return extraAllowedHosts.some((entry) => String(entry).trim().toLowerCase() === hostname);
+}
+
+export function createMockTransport() {
+  return {
+    async listModels(_endpoint, candidates) {
+      return { ok: true, models: new Set(candidates.map((item) => item.model)) };
+    },
+    async complete(_candidate, payload) {
+      const userMessage = String(payload?.messages?.[1]?.content || "");
+      if (userMessage.trim() === "OK") {
+        return {
+          choices: [{ message: { content: "OK" } }],
+          usage: { prompt_tokens: 12, completion_tokens: 2 }
+        };
+      }
+      const lower = userMessage.toLowerCase();
+      let severity = "P2";
+      let category = "application";
+      let incidentType = "latency_degradation";
+      let requiresHumanApproval = false;
+
+      if (lower.includes("wal") || lower.includes("disk") || lower.includes("tablespace")) {
+        severity = "P1";
+        category = "database";
+        incidentType = "disk_saturation";
+        requiresHumanApproval = true;
+      } else if (lower.includes("leak") || lower.includes("credential") || lower.includes("token")) {
+        severity = "P1";
+        category = "security";
+        incidentType = "credential_leak";
+        requiresHumanApproval = true;
+      } else if (lower.includes("oom")) {
+        severity = "P1";
+        category = "compute";
+        incidentType = "oom_kill";
+        requiresHumanApproval = true;
+      } else if (lower.includes("pool") || lower.includes("connection")) {
+        severity = "P2";
+        category = "database";
+        incidentType = "connection_exhaustion";
+      } else if (lower.includes("dns")) {
+        severity = "P2";
+        category = "network";
+        incidentType = "dns_resolution_failure";
+      }
+
+      const recommendedAction = SAFE_ACTIONS_BY_INCIDENT_TYPE[incidentType]
+        || "check_downstream_latency_and_circuit_breakers";
+
+      return {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              severity,
+              category,
+              incidentType,
+              recommendedAction,
+              requiresHumanApproval,
+              summary: `Mock triage classified ${incidentType} (${severity}) with verified read-only diagnostics.`
+            })
+          }
+        }],
+        usage: { prompt_tokens: 420, cached_tokens: 120, completion_tokens: 68 }
+      };
+    }
+  };
+}
+
+function normalizeTransport(transportOption, mockMode = false) {
+  if (!transportOption) {
+    return mockMode ? createMockTransport() : createHttpTransport();
+  }
   if (typeof transportOption === "function") {
     return {
       async listModels(_endpoint, candidates) {
@@ -397,9 +491,11 @@ export function createGateway(options = {}) {
   );
   const now = typeof options.now === "function" ? options.now : () => Date.now();
   const sleep = typeof options.sleep === "function" ? options.sleep : defaultSleep;
+  const mockMode = Boolean(options.mockMode);
+  const allowedHosts = Array.isArray(options.allowedHosts) ? options.allowedHosts : [];
   const cooldownStore = options.cooldownStore || new CooldownStore({ now });
   const costGuard = options.costGuard || new CostGuard({ now });
-  const transport = normalizeTransport(options.transport);
+  const transport = normalizeTransport(options.transport, mockMode);
   const stickyFallback = options.stickyFallback !== false;
   const maxSameRouteRetries = Math.max(0, Number(options.maxSameRouteRetries ?? 1));
   const preflightTimeoutMs = Math.max(200, Number(options.preflightTimeoutMs ?? DEFAULT_PREFLIGHT_TIMEOUT_MS));
@@ -735,15 +831,35 @@ export function createGateway(options = {}) {
   const server = http.createServer(async (req, res) => {
     const started = performance.now();
     const origin = String(req.headers.origin || "");
-    const url = new URL(req.url || "/", `http://${host}:${port}`);
+    const rawReqUrl = String(req.url || "/");
+    let safePath = rawReqUrl.split("?")[0] || "/";
     let status = 500;
     let logMeta = {};
 
     try {
+      const hostHeader = req.headers.host;
+      if (hostHeader && !isAllowedLoopbackHost(hostHeader, allowedHosts)) {
+        status = 403;
+        return sendJson(res, status, { ok: false, error: "Host not allowed." }, allowedOrigins, origin);
+      }
+
       if (origin && allowedOrigins.length > 0 && !allowedOrigins.includes(origin)) {
         status = 403;
         return sendJson(res, status, { ok: false, error: "Origin not allowed." }, allowedOrigins, origin);
       }
+
+      let url;
+      try {
+        if (/^https?:\/\//i.test(rawReqUrl) || rawReqUrl.includes("\\")) {
+          throw new Error("Absolute or backslash URL rejected.");
+        }
+        url = new URL(rawReqUrl, `http://${host}:${port}`);
+        safePath = url.pathname;
+      } catch {
+        status = 400;
+        return sendJson(res, status, { ok: false, error: "Malformed request target." }, allowedOrigins, origin);
+      }
+
       if (req.method === "OPTIONS") {
         status = 204;
         res.writeHead(status, responseHeaders(allowedOrigins, origin));
@@ -793,7 +909,7 @@ export function createGateway(options = {}) {
       logger({
         timestamp: new Date(now()).toISOString(),
         method: req.method,
-        path: url.pathname,
+        path: safePath,
         status,
         elapsedMs: Math.round(performance.now() - started),
         ...logMeta
@@ -844,10 +960,22 @@ const directEntry = process.argv[1]
   && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 
 if (directEntry) {
-  const gateway = createGateway();
+  const mockMode = process.argv.includes("--mock") || process.env.GATEWAY_MOCK_MODE === "1";
+  const gateway = createGateway({ mockMode });
   const addr = await gateway.start();
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await gateway.stop();
+    console.log(JSON.stringify({ event: "gateway_stopped", signal }));
+    process.exit(0);
+  };
+  process.on("SIGINT", () => { void shutdown("SIGINT"); });
+  process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
   console.log(JSON.stringify({
     event: "gateway_started",
+    mode: mockMode ? "mock" : "upstream",
     url: `http://${addr.address}:${addr.port}`,
     chain: gateway.chain.map((candidate) => `${candidate.provider}/${candidate.model}`)
   }));
