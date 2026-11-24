@@ -1,0 +1,7 @@
+node_modules/
+eval/results/
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,17 @@
+{
+  "name": "llm-resilience-gateway",
+  "version": "1.0.0",
+  "description": "Zero-dependency LLM resilience gateway with semantic cooldowns, USD cost guardrails, strict JSON Schema validation, and deterministic incident triage policy enforcement.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {},
+  "scripts": {
+    "check": "node --check src/cooldown.mjs && node --check src/cost_guard.mjs && node --check src/guardrails.mjs && node --check src/gateway.mjs && node --check eval/run_benchmark.mjs",
+    "start": "node src/gateway.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "eval": "node eval/run_benchmark.mjs"
+  }
+}
