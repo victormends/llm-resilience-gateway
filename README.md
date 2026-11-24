@@ -110,7 +110,7 @@ Output from `npm run eval` (`node eval/run_benchmark.mjs`, `seed=20261124`, `12`
 | Failover & Cooldown Skips | `27` fallbacks, `8` cooldown skips | `4` rate limits, `1` transient, `3` guardrail blocks injected |
 | Economy-Tier Routed Calls | `15` requests | Triggered by `downgradeActive: true` (`costSafetyLimitUsd=$0.095`) |
 | Destructive Blocks / Unsafe Leaks | `2` blocked / `0` leaks | `destructiveAttemptsBlocked: 2`, `unsafeLeakCount: 0` |
-| Prompt Cache Hit Rate / Cost | `21.05%` (`$0.112702` total) | `36,000 / 171,000` cached prompt tokens |
+| Prompt Cache Hit Rate / Cost | `21.05%` (`$0.112702` total, simulated USD pricing) | `36,000 / 171,000` cached prompt tokens; computed from configurable per-model token rate tables, not billed API spend |
 
 Start the local HTTP gateway (`127.0.0.1:8420` by default) in **built-in mock mode** (no API keys needed) or upstream proxy mode:
 
@@ -144,7 +144,7 @@ curl -s -X POST http://127.0.0.1:8420/triage \
 - `src/cost_guard.mjs`: cached/uncached token ledger, USD cost calculator, and auto-downgrade engine
 - `src/guardrails.mjs`: secret redaction, `promptSafeJson()`, strict JSON Schema validator, destructive action blocker, and deterministic triage policy
 - `src/gateway.mjs`: local `127.0.0.1` HTTP gateway, Host allowlist, injectable transport abstraction, `MODEL_CHAIN` failover, sticky fallback promotion, and single-flight health probing
-- `eval/run_benchmark.mjs`: offline benchmark measuring raw vs. post-guardrail accuracy, concurrent `stabilityRate`, median/P95 latency, cooldown skips, and unsafe output blocking
+- `eval/run_benchmark.mjs`: offline benchmark measuring raw vs. post-guardrail fault-injection policy pass rate, concurrent `stabilityRate`, median/P95 latency, cooldown skips, and unsafe output blocking
 - `tests/*.test.mjs`: built-in `node:test` test suite covering cooldowns, cost guard, guardrails, HTTP gateway contracts, and benchmark reproducibility
 
 ## License
