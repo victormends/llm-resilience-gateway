@@ -97,14 +97,16 @@ npm run eval
 
 ## Measured Offline Eval Results
 
+This evaluation runs against an **in-process deterministic mock upstream** injecting scripted schema, severity, and destructive-command faults to verify guardrail enforcement and failover mechanics, not real-world LLM model accuracy.
+
 Output from `npm run eval` (`node eval/run_benchmark.mjs`, `seed=20261124`, `12` scenarios x `3` repeats = `36` requests at concurrency `4`):
 
 | Metric | Measured Value | Notes |
 | :--- | :--- | :--- |
 | Requests Succeeded | `36 / 36` (`0` failed) | All faulted/blocked requests recovered via failover |
-| Raw vs. Post-Guardrail Accuracy | `0.50` -> `1.00` (`+0.50`) | Deterministic policy & strict JSON schema calibration |
+| Synthetic Fault-Injection Policy Pass Rate | `0.50` -> `1.00` (`12 / 12` scripted mock scenarios) | Deterministic policy & strict JSON schema calibration (`+0.50` gain) |
 | Scenario Stability Rate | `1.00` (`12 / 12` scenarios) | Identical output across concurrent repeats |
-| Median / P95 Latency | `18.61 ms` / `25.21 ms` | Total benchmark wall time: `199 ms` |
+| Median / P95 Latency | `18.61 ms` / `25.21 ms` | Measures **local loopback mock-upstream gateway overhead**, not external LLM API latency (total benchmark wall time: `199 ms`) |
 | Failover & Cooldown Skips | `27` fallbacks, `8` cooldown skips | `4` rate limits, `1` transient, `3` guardrail blocks injected |
 | Economy-Tier Routed Calls | `15` requests | Triggered by `downgradeActive: true` (`costSafetyLimitUsd=$0.095`) |
 | Destructive Blocks / Unsafe Leaks | `2` blocked / `0` leaks | `destructiveAttemptsBlocked: 2`, `unsafeLeakCount: 0` |
