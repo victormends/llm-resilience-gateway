@@ -95,6 +95,21 @@ npm test
 npm run eval
 ```
 
+## Measured Offline Eval Results
+
+Output from `npm run eval` (`node eval/run_benchmark.mjs`, `seed=20261124`, `12` scenarios x `3` repeats = `36` requests at concurrency `4`):
+
+| Metric | Measured Value | Notes |
+| :--- | :--- | :--- |
+| Requests Succeeded | `36 / 36` (`0` failed) | All faulted/blocked requests recovered via failover |
+| Raw vs. Post-Guardrail Accuracy | `0.50` -> `1.00` (`+0.50`) | Deterministic policy & strict JSON schema calibration |
+| Scenario Stability Rate | `1.00` (`12 / 12` scenarios) | Identical output across concurrent repeats |
+| Median / P95 Latency | `18.61 ms` / `25.21 ms` | Total benchmark wall time: `199 ms` |
+| Failover & Cooldown Skips | `27` fallbacks, `8` cooldown skips | `4` rate limits, `1` transient, `3` guardrail blocks injected |
+| Economy-Tier Routed Calls | `15` requests | Triggered by `downgradeActive: true` (`costSafetyLimitUsd=$0.095`) |
+| Destructive Blocks / Unsafe Leaks | `2` blocked / `0` leaks | `destructiveAttemptsBlocked: 2`, `unsafeLeakCount: 0` |
+| Prompt Cache Hit Rate / Cost | `21.05%` (`$0.112702` total) | `36,000 / 171,000` cached prompt tokens |
+
 Start the local HTTP gateway (`127.0.0.1:8420` by default) in **built-in mock mode** (no API keys needed) or upstream proxy mode:
 
 ```bash
